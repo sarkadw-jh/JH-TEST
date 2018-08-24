@@ -1,0 +1,1176 @@
+==============================================================================================================================================================
+Main.mts
+==============================================================================================================================================================
+
+arrInputTags=Array("@Completed","@Regression")
+
+LoadFunctionLibrary RootDir & "\FunctionLibrary\Common\Parser.vbs"
+
+strFeatureDir = RootDir & "\Features"
+'strStepDefDir = RootDir & "\FunctionLibrary"
+Environment.Value("ReportPath")=RootDir & "\Report\Summary.html"
+
+Call Report_Create()
+Set objFSO = CreateObject("Scripting.FileSystemObject")
+Set objFiles = objFSO.GetFolder(strFeatureDir).Files
+For Each file In objFiles
+    strFeatureFilePath = file.Path
+    strExtension = objFSO.getExtensionName(strFeatureFilePath)
+    strFileName = objFSO.getFileName(strFeatureFilePath)
+    If InStr(1, strExtension, "feature", 1) = 1 Then
+    	LoadFunctionLibrary RootDir & "\FunctionLibrary\" & Replace(strFileName,"feature","vbs",1,1,1)
+       Call ProcessFeature(file.Path)
+    End If
+Next
+
+Function ProcessFeature(file_path)
+	
+	intScenario_Passed=0:intScenario_Failed=0:intScenario_Excluded=0:intScenario_Total=0
+	intStep_Passed=0:intStep_Failed=0:intStep_Skipped=0:intStep_Pending=0:intStep_Undefined=0
+	Set objFeature=Nothing
+	
+	Set objFeature=GetFeatureObject(strFeatureFilePath)
+    objFeature.Load (file_path)
+    arrFeatureTags=Split(objFeature.GetAssociatedTags())
+        
+    Call Report_AddFeature(objFeature.Title,objFeature.Description)
+    
+    arrScenarios = objFeature.GetAllScenarios()
+	
+	intScenario_Total=Ubound(arrScenarios)+1
+		
+    For Each objSc In arrScenarios
+    	arrScenarioTags=Split(objSc.GetAssociatedTags())
+		RunThisScenario=False
+	    For Each CurrentScTag in arrScenarioTags
+	    	CurrentScTag=UCase(Trim(CurrentScTag))
+	    	For Each InputTag in arrInputTags
+	    		InputTag=UCase(Trim(InputTag))
+	    		If CurrentScTag=InputTag Then
+	    			RunThisScenario=True
+	    			Exit For
+	    		End If
+	    	Next
+	    	If RunThisScenario=True Then 
+	    		Exit For
+	    	End If
+	    Next
+    	
+    	If RunThisScenario=True Then
+    		Call ProcessScenario(objSc)
+    	End If
+    Next
+      
+    Call Report_CloseFeature()
+    Set objFeature = Nothing	
+   
+End Function
+
+ Function ProcessScenario(objSc)
+	
+	Call Report_AddScenario(objSc.Category,objSc.Title,objSc.Description)
+    	
+	If objSc.Category="Scenario" Then
+		For Each objStep In objSc.GetSteps()
+	        print ("'Step: " & objStep.Description)
+	        strFnName = objStep.GetFunction_Name()
+	        
+	        strParameters=""
+	        strInline = Trim(objStep.GetParam_Inline())
+	        If strInline<>"" Then
+	        	strParameters=Join(Split(strInline,vbnewLine),",")
+	        End If
+	        
+	        strDocString = Trim(objStep.GetParam_DocStr())
+	        If strDocString<>"" Then
+	        	strParameters= strParameters & "," & Chr(34) & strDocString & Chr(34)
+	        End If
+	        
+	        strTables = Trim(objStep.GetParam_Table())
+	        If strTables<>"" Then
+	        	arrTable= ConvertTableToArray(strTables)
+	        End If
+	        tStart=Now()
+	        On Error Resume Next
+	        If strTables="" Then
+	        	strCallFunction=strFnName & "(" & strParameters & ")"
+	        	blnStatus=Eval(strCallFunction)
+	        Else
+				strCallFunction=strFnName & "(" & strParameters      
+				blnStatus=Eval(strCallFunction &"," & "arrTable" & ")")
+	        End If
+	        tEnd=Now()
+	   		Call Report_AddStep(objStep.Category,objStep.Description,DateDiff("s",tStart,tEnd),blnStatus)
+	    Next
+	ElseIf objSc.Category="Outline" Then	
+		strExampleTable=objSc.Capture_OutlineExample()
+		If strExampleTable<>"" Then
+        	arrExampleTable= ConvertTableToArray(strExampleTable)
+        	arrScSteps=objSc.GetSteps()
+        	For intRow = 1 To Ubound(arrExampleTable)
+        		For Each objStep In arrScSteps
+			        print ("'Step: " & objStep.Description)
+			        strReportDesc=objStep.Description
+			        strFnName = objStep.GetFunction_Name()
+		    		
+		    		arrStepOutlineArg=Split(objStep.GetParam_Outline(),vbNewLine)
+		    		
+			        strParameters=""
+			        strInline = Trim(objStep.GetParam_Inline())
+			        If strInline<>"" Then
+			        	strParameters=Join(Split(strInline,vbnewLine),",")
+			        End If
+	
+			        strExample = Trim(objStep.Capture_OutlineData(intRow))
+			        
+			        arrExampleData=Split(strExample,vbnewLine)
+			        For i=0 To Ubound(arrExampleData)
+			        	strReportDesc=Replace(strReportDesc,"<" & arrStepOutlineArg(i) & ">",Trim(arrExampleData(i)),1,1,1)
+			        Next
+			        
+			        If strExample<>"" Then
+			        	strExample=Join(Split(strExample,vbnewLine),",")
+			        	If strParameters="" Then
+			        		strParameters= strExample
+			        	Else
+							strParameters= strParameters & "," & strExample		        	
+			        	End If
+			        End If
+			        
+			        strDocString = Trim(objStep.GetParam_DocStr())
+			        If strDocString<>"" Then
+			        	strParameters= strParameters & "," & Chr(34) & strDocString & Chr(34)
+			        End If
+			        
+			        strTables = Trim(objStep.GetParam_Table())
+			        If strTables<>"" Then
+			        	arrTable= ConvertTableToArray(strTables)
+			        End If
+			        
+			        If strTables="" Then
+			        	strCallFunction=strFnName & "(" & strParameters & ")"
+			        	blnStatus=Eval(strCallFunction)
+			        Else
+						strCallFunction=strFnName & "(" & strParameters      
+						blnStatus=Eval(strCallFunction &"," & "arrTable" & ")")
+			        End If
+			   		Call Report_AddStep(objStep.Category,strReportDesc,DateDiff("s",tStart,tEnd),blnStatus)
+			    Next
+        	Next
+        End If
+	End If   
+	Call Report_CloseScenario()
+    
+ End Function
+
+Function ConvertTableToArray(strDtTable)
+	
+	Dim arrDtTable()
+	ReDim arrDtTable(0,0)
+	If strDtTable<>"" Then
+		arrRows=Split(strDtTable,vbNewLine)
+		ReDim arrDtTable(Ubound(arrRows),Ubound(Split(arrRows(0),"|"))-2)
+		
+		For i = 0 To Ubound(arrRows)
+			arrCurRow=Split(arrRows(i),"|")
+			For j = 1 To Ubound(arrCurRow)-1
+				arrDtTable(i,j-1)=arrCurRow(j)
+			Next
+		Next
+	
+	End If
+	ConvertTableToArray=arrDtTable
+	
+End Function
+
+==============================================================================================================================================================
+GenerateSetpDef.vbs
+==============================================================================================================================================================
+Set objFSO = CreateObject("Scripting.FileSystemObject")
+Set objArgs=Wscript.Arguments
+
+CurrentDir = objFSO.getParentFolderName(Wscript.ScriptFullName)
+strFeatureDir = objArgs(0)
+strStepDefDir = objArgs(1)
+
+Wscript.Echo "Feature Dir: " & strFeatureDir
+Wscript.Echo "SteDef Dir: " & strStepDefDir
+Wscript.Echo "-----------------------------------------------------------------------------------------------------------------------------------"
+Set Parser=objFSO.OpenTextFile(CurrentDir & "\Parser.vbs")
+ParserCode=Parser.ReadAll
+Parser.Close
+
+Execute ParserCode
+
+tstart = Now
+Set objFiles = objFSO.GetFolder(strFeatureDir).Files
+For Each file In objFiles
+    strFeatureFilePath = file.Path
+    strExtension = objFSO.getExtensionName(strFeatureFilePath)
+    strFileName = objFSO.getFileName(strFeatureFilePath)
+    If InStr(1, strExtension, "feature", 1) = 1 Then
+        strStepDefFilePath = strStepDefDir & "\" & Replace(strFileName, strExtension, "vbs", 1, 1, 1)
+        Set objStepDefFile = objFSO.CreateTextFile(strStepDefFilePath, True)
+        Call Process(file.Path, objStepDefFile)
+		Wscript.Echo file.Path
+        objStepDefFile.Close
+    End If
+Next
+Wscript.Echo "-----------------------------------------------------------------------------------------------------------------------------------"
+tEnd = Now
+Wscript.Echo "Step definitions generated. " & DateDiff("s", tstart, tEnd) & " Sec"
+
+
+Function Process(file_path, objVbsFile)
+
+   	Set objFeature=GetFeatureObject(strFeatureFilePath)
+    objFeature.Load (file_path)
+    
+    objVbsFile.WriteLine ("'====================================================================================================")
+    objVbsFile.WriteLine ("'Feature File Name: " & objFeature.FileName)
+    objVbsFile.WriteLine ("'Feature Name: " & objFeature.Title)
+    objVbsFile.WriteLine ("'Feature Description: " & objFeature.Description)
+    objVbsFile.WriteLine ("'Feature Tags: " & objFeature.GetAssociatedTags)
+    objVbsFile.WriteLine ("'====================================================================================================")
+    
+    objVbsFile.WriteBlankLines (1)
+
+    arrScenarios = objFeature.GetAllScenarios()
+
+    For Each objSc In arrScenarios
+       
+        objVbsFile.WriteLine ("'----------------------------------------------------------------------------------------------------")
+        objVbsFile.WriteLine ("'Scenario Title: " & objSc.Title)
+        objVbsFile.WriteLine ("'Scenario Type: " & objSc.Category)
+        objVbsFile.WriteLine ("'Scenario Description: " & objSc.Description)
+        objVbsFile.WriteLine ("'Scenario Tags: " & objSc.GetAssociatedTags())
+        objVbsFile.WriteLine ("'----------------------------------------------------------------------------------------------------")
+        'objVbsFile.WriteBlankLines (1)
+
+        For Each objStep In objSc.GetSteps()
+            'objVbsFile.WriteLine ("'======================================================================")
+            objVbsFile.WriteLine ("'Step: " & objStep.Description)
+'                objVbsFile.WriteLine ("'Step Arguments[Inline]: " & objStep.GetParam_Inline)
+'                objVbsFile.WriteLine ("'Step Arguments[Table]: " & objStep.GetParam_Table)
+'                objVbsFile.WriteLine ("'Step Arguments[Doc String]: " & objStep.GetParam_DocStr)
+'                objVbsFile.WriteLine ("'Outline Arguments: " & objStep.Capture_OutlineArguments)
+            'objVbsFile.WriteLine ("'======================================================================")
+            strFnName = objStep.GetFunction_Name()
+            strFnParam = objStep.GetFunction_Param()
+            objVbsFile.WriteLine ("Function " & strFnName & "(" & strFnParam & ")" & vbNewLine & vbTab & "" & vbNewLine & "End Function")
+            objVbsFile.WriteBlankLines (1)
+        Next
+
+    Next
+
+    Set objFeature = Nothing
+    
+
+End Function
+
+==============================================================================================================================================================
+Parser.vbs
+==============================================================================================================================================================
+
+Function GetFeatureObject(file_path)
+	Set objFeature = New Feature
+    objFeature.Load (file_path)
+    Set GetFeatureObject=objFeature
+End Function
+'======================================================		FEATURE	===================================================================================
+Class Feature
+	Private arrFeatureContent()
+	Private arrScenarioObjects()
+	
+	Private blnTagCondition
+	Private strFeatureFilePath
+	Private strFeatureFileName
+	Private intFeatureKeywordPos
+	Private intScenarioStartingPos
+	
+	Private Sub Class_Initialize()
+	    strFeatureFilePath = ""
+	    ReDim arrFeatureContent(0)
+	    ReDim arrScenarioObjects(0)
+	End Sub
+	
+	Public Property Get Content()
+	   Content = Join(arrFeatureContent, vbCrLf)
+	End Property
+	
+	Public Property Get Title()
+	    Title = Trim(Split(arrFeatureContent(intFeatureKeywordPos), "Feature: ", 2, 0)(1))
+	End Property
+	
+	Public Property Get FileName()
+	    FileName = strFeatureFileName
+	End Property
+	
+	Public Property Get Description()
+	
+	    'The free format description for Feature ends with the Scenario keyword or Scenario Tags.
+	    
+	    Dim arrDescription()
+	    intDescIndex = 0
+	    For i = intFeatureKeywordPos + 1 To intScenarioStartingPos - 1
+	        ReDim Preserve arrDescription(intDescIndex)
+	        arrDescription(intDescIndex) = arrFeatureContent(i)
+	        intDescIndex = intDescIndex + 1
+	    Next
+	    Description = Join(arrDescription, ".")
+	    
+	End Property
+	
+	
+	Public Function Load(strFilePath)
+	    
+	    Set objFSO = CreateObject("Scripting.FileSystemObject")
+	        
+	    If objFSO.FileExists(strFilePath) Then
+	        Set objFile = objFSO.GetFile(strFilePath)
+	        strFeatureFileName = objFSO.getFileName(objFile)
+	        strFeatureFilePath = strFilePath
+	        Set objFile = Nothing
+	    Else
+	        Set objFile = Nothing
+	        Err.Raise 1000, "Feature.Load", "File Not Found"
+	    End If
+	    
+	    
+	    Set objFeatureFile = objFSO.OpenTextFile(strFeatureFilePath)
+	    strRawContent = objFeatureFile.readAll()
+	    arrFile = Split(strRawContent, vbCrLf)
+	    
+	    'To replace multiple space with single space
+	    Set objRegExp = CreateObject("Vbscript.RegExp")
+	    objRegExp.IgnoreCase = True
+	    objRegExp.Global = True
+	    objRegExp.Pattern = "\s+"
+	    
+	    'Contruct array ignoring empty and commented lines.Inline comments are not allowed in gherkin.
+	    intFeatureArrCnt = 0
+	    intUbound = UBound(arrFile)
+	    For intLineCnt = 0 To intUbound
+	        strFormattedLine = Trim(objRegExp.Replace(arrFile(intLineCnt), " "))
+	        If strFormattedLine <> "" And Left(strFormattedLine, 1) <> "#" Then
+	            ReDim Preserve arrFeatureContent(intFeatureArrCnt)
+	            strTagLines = ""
+	            'Combine multi-line tags
+	            If Left(strFormattedLine, 1) = "@" Then
+	                Do
+	                    strTagLines = strTagLines & arrFile(intLineCnt) & " "
+	                    intLineCnt = intLineCnt + 1
+	                Loop Until Left(arrFile(intLineCnt), 1) <> "@"
+	                intLineCnt = intLineCnt - 1
+	                strFormattedLine = Trim(strTagLines)
+	            End If
+	            
+	            arrFeatureContent(intFeatureArrCnt) = strFormattedLine
+	            intFeatureArrCnt = intFeatureArrCnt + 1
+	        End If
+	
+	    Next
+	        
+	    objFeatureFile.Close
+	    Set objFeatureFile = Nothing
+	    
+	    intUpperbound = UBound(arrFeatureContent)
+	    
+	    'Look for Feature keyword. Case sensitive.Space after : is required.
+	    For i = 0 To intUpperbound
+	        If InStr(1, arrFeatureContent(i), "Feature: ", vbBinaryCompare) = 1 Then
+	            intFeatureKeywordPos = i
+	            Exit For
+	        End If
+	    Next
+	    
+	    'Identify scenario starting position (starts with '@' followed by a valid scenario keyword or only a scenario keyword)
+	    For i = intFeatureKeywordPos + 1 To intUpperbound
+	        strTempLine = arrFeatureContent(i)
+	        If (Left(strTempLine, 1) = "@") Or TestScenarioLine(strTempLine) Then
+	            intScenarioStartingPos = i
+	            Exit For
+	        End If
+	    Next
+	    
+	End Function
+	
+	
+	Public Function GetAssociatedTags()
+	    
+	    'Tags are delimited by space or newline character. Tags are not allowed before background or steps
+	
+	    Dim arrFeatureTags()
+	    intTagIndex = 0
+	    For i = 0 To intFeatureKeywordPos - 1
+	        If Left(arrFeatureContent(i), 1) = "@" Then
+	            ReDim Preserve arrFeatureTags(intTagIndex)
+	            arrFeatureTags(intTagIndex) = arrFeatureContent(i)
+	            intTagIndex = intTagIndex + 1
+	        End If
+	    Next
+	    strTags = Join(arrFeatureTags, " ")
+	    GetAssociatedTags = strTags
+	    
+	End Function
+	
+	
+	Public Function GetAllScenarios()
+	
+	    Dim arrScenarioObjects()
+	    Dim arrScenarioContent()
+	    intUpperbound = UBound(arrFeatureContent)
+	    intScObjectCnt = 0
+	    For lineCnt = intScenarioStartingPos To intUpperbound
+	        strTempLine = arrFeatureContent(lineCnt)
+	        If (Left(strTempLine, 1) = "@") Or (TestScenarioLine(strTempLine)) Then
+	            i = 0
+	            blockCnt = 0
+	            For scLineCnt = lineCnt To intUpperbound
+	                strTempLine = arrFeatureContent(scLineCnt)
+	                If TestScenarioLine(strTempLine) Then
+	                    blockCnt = blockCnt + 1
+	                    If blockCnt = 1 And (Left(arrFeatureContent(scLineCnt - 1), 1) = "@") Then
+	                        ReDim Preserve arrScenarioContent(i)
+	                        arrScenarioContent(i) = arrFeatureContent(scLineCnt - 1)
+	                        i = i + 1
+	                    End If
+	                End If
+	
+	                If blockCnt = 2 Then
+	                    lineCnt = lineCnt - 1
+	                    Exit For
+	                End If
+	                If blockCnt = 1 Then
+	                    ReDim Preserve arrScenarioContent(i)
+	                    arrScenarioContent(i) = strTempLine
+	                    i = i + 1
+	                End If
+	                lineCnt = lineCnt + 1
+	            Next
+	
+	            ReDim Preserve arrScenarioObjects(intScObjectCnt)
+	
+	            Set objScenario = New Scenario
+	            objScenario.LoadScenario (arrScenarioContent)
+	
+	            Set arrScenarioObjects(intScObjectCnt) = objScenario
+	            intScObjectCnt = intScObjectCnt + 1
+	
+	        End If
+	    Next
+	
+	    GetAllScenarios = arrScenarioObjects
+	
+	End Function
+	
+	
+	Private Function TestScenarioLine(strTestLine)
+	    If InStr(1, strTestLine, "Scenario: ", 0) = 1 Or InStr(1, strTestLine, "Scenario Outline: ", 0) = 1 Or InStr(1, strTestLine, "Background: ", 0) Then
+	        TestScenarioLine = True
+	    Else
+	        TestScenarioLine = False
+	    End If
+	End Function
+	
+	Private Function GetScenarioLineIndex(intIndexStartFrom)
+	
+	    intUpperbound = UBound(arrFeatureContent)
+	    For lineCnt = intIndexStartFrom To intUpperbound
+	        strCurrentLine = arrFeatureContent(lineCnt)
+	        strNextLine = arrFeatureContent(lineCnt + 1)
+	        If Left(strCurrentLine, 1) = "@" And TestScenarioLine(strNextLine) Then
+	            blnTagCondition = True
+	            GetScenarioLineIndex = lineCnt
+	            Exit Function
+	        End If
+	        If TestScenarioLine(strCurrentLine) Then
+	            GetScenarioLineIndex = lineCnt
+	            Exit Function
+	        End If
+	    Next
+	    
+	End Function
+	
+	Private Sub Class_Terminate()
+	    strFeatureFilePath = ""
+	    ReDim arrFeatureContent(0)
+	    ReDim arrScenarioObjects(0)
+	End Sub
+End Class
+'======================================================		SCENARIO	===================================================================================
+Class Scenario
+	
+	Private arrScenarioContent()
+	Private intStepStartingIndex
+	Private blnTagExist
+	
+	Private Sub Class_Initialize()
+	    ReDim arrScenarioContent(0)
+	    intStepStartingIndex = 0
+	    blnTagExist = False
+	End Sub
+	
+	Public Property Get Content()
+	   Content = Join(arrScenarioContent, vbNewLine)
+	End Property
+	
+	Public Property Get Title()
+	    If blnTagExist = True Then
+	        Title = Trim(Split(arrScenarioContent(1), ":", 2, vbTextCompare)(1))
+	    Else
+	        Title = Trim(Split(arrScenarioContent(0), ":", 2, vbTextCompare)(1))
+	    End If
+	End Property
+	
+	Public Property Get Description()
+	    If blnTagExist = True Then
+	        intDescCnt = 2
+	    Else
+	        intDescCnt = 1
+	    End If
+	    Dim arrDescription()
+	    For i = intDescCnt To intStepStartingIndex - 1
+	        ReDim Preserve arrDescription(i - 1)
+	        arrDescription(i - 1) = arrScenarioContent(i)
+	    Next
+	    Description = Join(arrDescription, vbNewLine)
+	End Property
+	Public Property Get Category()   
+	    If blnTagExist = True Then
+	        strTempLine = arrScenarioContent(1)
+	    Else
+	        strTempLine = arrScenarioContent(0)
+	    End If
+	    
+	    strType = Trim(Split(strTempLine, ":", 2, vbTextCompare)(0))
+	
+	    If strType = "Background" Then
+	        Category = "Background"
+	    ElseIf strType = "Scenario Outline" Then
+	        Category = "Outline"
+	    ElseIf strType = "Scenario" Then
+	        Category = "Scenario"
+	    Else
+	        Category = "Unknown"
+	    End If
+	End Property
+	
+	
+	Public Function GetAssociatedTags() 
+	    If Left(arrScenarioContent(0), 1) = "@" Then
+	        GetAssociatedTags = arrScenarioContent(0)
+	    Else
+	        GetAssociatedTags = ""
+	    End If
+	End Function
+	Public Function LoadScenario(arrScContent)
+	
+	    If Left(arrScContent(0), 1) = "@" Then
+	        blnTagExist = True
+	    End If
+	    For i = 0 To UBound(arrScContent)
+	        strTempLine = arrScContent(i)
+	        If TestStepCondition(strTempLine) Then
+	            intStepStartingIndex = i
+	            Exit For
+	        End If
+	    Next
+	    ReDim arrScenarioContent(Ubound(arrScContent))
+	    For i=0 To Ubound(arrScContent)
+	    	arrScenarioContent(i)=arrScContent(i)
+	    Next
+	    
+	End Function
+	
+	Public Function GetSteps()
+	    Dim arrStepObjects()
+	    Dim arrStepContent()
+	    intUpperbound = UBound(arrScenarioContent)
+	    intStepObjectCnt = 0
+	    For lineCnt = 0 To intUpperbound
+	        strTempLine = arrScenarioContent(lineCnt)
+	        'strTempLine = Replace(strLine, " ", "")
+	        If TestStepCondition(strTempLine) Then
+	            i = 0
+	            blockCnt = 0
+	            For scLineCnt = lineCnt To intUpperbound
+	                strTempLine = arrScenarioContent(scLineCnt)
+	                'strTempLine = Replace(strLine, " ", "")
+	                If TestStepCondition(strTempLine) Then
+	                    blockCnt = blockCnt + 1
+	                End If
+	                
+	                If blockCnt = 2 Or InStr(1, strTempLine, "Examples:", 0) Then
+	                    lineCnt = lineCnt - 1
+	                    Exit For
+	                End If
+	                
+	                ReDim Preserve arrStepContent(i)
+	                arrStepContent(i) = strTempLine
+	                i = i + 1
+	                lineCnt = lineCnt + 1
+	            Next
+	                        
+	            ReDim Preserve arrStepObjects(intStepObjectCnt)
+	            
+	            Set objStep = New Steps
+	            objStep.LoadStep arrStepContent,Me
+	            
+	            Set arrStepObjects(intStepObjectCnt) = objStep
+	            intStepObjectCnt = intStepObjectCnt + 1
+	            
+	        End If
+	    Next
+	    GetSteps = arrStepObjects
+	End Function
+	
+	Private Function TestStepCondition(strTestLine)
+	
+	    If InStr(1, strTestLine, "* ", 0) = 1 Or InStr(1, strTestLine, "Given ") = 1 Or InStr(1, strTestLine, "When ") = 1 Or InStr(1, strTestLine, "Then ") = 1 Or InStr(1, strTestLine, "And ") Or InStr(1, strTestLine, "But ") = 1 Then
+	        TestStepCondition = True
+	    Else
+	        TestStepCondition = False
+	    End If
+	    
+	End Function
+	
+	Private Sub Class_Terminate()
+	    ReDim arrScenarioContent(0)
+	    intStepStartingIndex = 0
+	End Sub
+	
+	
+	Public Function Capture_OutlineArguments()
+	
+	    strScenarioContent = Join(arrScenarioContent, vbNewLine)
+	    
+	    Set objRegExp = CreateObject("Vbscript.RegExp")
+	    objRegExp.IgnoreCase = True
+	    objRegExp.Global = True
+	    objRegExp.Pattern = "<.*?>"
+	    Set objMatches = objRegExp.Execute(strScenarioContent)
+	    
+	    If objMatches.Count > 0 Then
+	        i = 1
+	        For Each Match In objMatches
+	            strArgs = strArgs & Match.Value & vbNewLine
+	            i = i + 1
+	        Next
+	        If Right(strArgs, 2) = vbNewLine Then
+	            strArgs = Left(strArgs, Len(strArgs) - 2)
+	        End If
+	    End If
+	
+	    Set objRegExp = Nothing
+	    Capture_OutlineArguments = strArgs
+	    
+	End Function
+		
+	Public Function Capture_OutlineExample()
+	    
+	    blnExampleSection = False
+	    intExampleStartPos = 0
+	    For Each strLine In arrScenarioContent
+	        If InStr(1, strLine, "Examples:", 0) = 1 Then
+	            blnExampleSection = True
+	            Exit For
+	        End If
+	        intExampleStartPos = intExampleStartPos + 1
+	    Next
+	    
+	    strTableArg = ""
+	    If blnExampleSection = True Then
+	        intUbound = UBound(arrScenarioContent)
+	        For i = intExampleStartPos To intUbound
+	            strLine = arrScenarioContent(i)
+	            If Left(strLine, 1) = "|" And Right(strLine, 1) = "|" Then
+	                strTableArg = strTableArg & strLine & vbNewLine
+	            End If
+	        Next
+	    End If
+	    
+	    If Right(strTableArg, 2) = vbNewLine Then
+	        strTableArg = Left(strTableArg, Len(strTableArg) - 2)
+	    End If
+	    
+	    Capture_OutlineExample = strTableArg
+	    
+	End Function
+End Class
+'======================================================		STEP	===================================================================================
+Class Steps
+
+	Private arrSteps()
+	Private objScenairo
+	Private strExampleTable
+	Private strStepDesc
+	
+	Private Sub Class_Initialize()
+	    ReDim arrSteps(0)
+	End Sub
+	
+	Public Function LoadStep(arrStepLines,objSc)
+		Set objScenairo=objSc
+		If objScenairo.Category="Outline" Then
+			strExampleTable=objScenairo.Capture_OutlineExample()
+		End IF
+		ReDim arrSteps(Ubound(arrStepLines))
+		For i = 0 To Ubound(arrStepLines)
+			arrSteps(i)=arrStepLines(i)
+		Next
+		strStepDesc=arrSteps(0)
+	End Function
+	
+	Public Property Get Content()
+	   Content = Join(arrSteps, vbNewLine)
+	End Property
+	
+	Public Property Get Description()
+	   Description = Split(strStepDesc," ",2,1)(1)
+	End Property
+	
+	Public Property Get Category()
+	   Category = Split(strStepDesc," ",2,1)(0)
+	End Property
+	
+	Private Sub Class_Terminate()
+	    ReDim arrSteps(0)
+	End Sub
+		
+	Public Function Capture_OutlineArguments()
+	    
+	    Set objRegExp = CreateObject("Vbscript.RegExp")
+	    objRegExp.IgnoreCase = True
+	    objRegExp.Global = True
+	    objRegExp.Pattern = "<.*?>"
+		strLine=arrSteps(0)
+	    Set objMatches = objRegExp.Execute(strLine)
+	    
+	    If objMatches.Count > 0 Then
+	        i = 1
+	        For Each Match In objMatches
+	            strArgs = strArgs & Match.Value & vbNewLine
+	            i = i + 1
+	        Next
+	        If Right(strArgs, 2) = vbNewLine Then
+	            strArgs = Left(strArgs, Len(strArgs) - 2)
+	        End If
+	    End If
+	    
+	    Set objRegExp = Nothing
+	    Capture_OutlineArguments = strArgs
+	    
+	End Function
+	
+	Public Function GetParam_Inline()
+	        
+	    Set objRegExp = CreateObject("Vbscript.RegExp")
+	    objRegExp.IgnoreCase = True
+	    objRegExp.Global = True
+	    objRegExp.Pattern = "\"".*?\"""
+		strLine=arrSteps(0)
+	    Set objMatches = objRegExp.Execute(strLine)
+	    
+	    If objMatches.Count > 0 Then
+	        i = 1
+	        For Each Match In objMatches
+	            strArgs = strArgs & Match.Value & vbNewLine
+	            i = i + 1
+	        Next
+	        If Right(strArgs, 2) = vbNewLine Then
+	            strArgs = Left(strArgs, Len(strArgs) - 2)
+	        End If
+	    End If
+	    
+	    Set objRegExp = Nothing
+	    GetParam_Inline = strArgs
+	    
+	End Function
+	
+	Public Function GetParam_Table()
+	    
+	    strTableArg = ""
+	    For Each strLine In arrSteps
+	        If Left(strLine, 1) = "|" And Right(strLine, 1) = "|" Then
+	            strTableArg = strTableArg & strLine & vbNewLine
+	        End If
+	    Next
+	    If Right(strTableArg, 2) = vbNewLine Then
+	        strTableArg = Left(strTableArg, Len(strTableArg) - 2)
+	    End If
+	    GetParam_Table = strTableArg
+	    
+	End Function
+	
+	Public Function GetParam_DocStr()
+	   
+	    strDocString = ""
+	    i = 0
+	    intStart = 0
+	    For Each strLine In arrSteps
+	        If Left(strLine, 3) = Chr(34) & Chr(34) & Chr(34) Then
+	            intStart = i + 1
+	            Exit For
+	        End If
+	        i = i + 1
+	    Next
+	    If intStart > 0 Then
+	        For i = intStart To UBound(arrSteps)
+	            If Left(arrSteps(i), 3) = Chr(34) & Chr(34) & Chr(34) Then
+	                Exit For
+	            End If
+	            strDocString = strDocString & arrSteps(i) & vbNewLine
+	        Next
+	    End If
+	    
+	    If Right(strDocString, 2) = vbNewLine Then
+	        strDocString = Left(strDocString, Len(strDocString) - 2)
+	    End If
+	    
+	    GetParam_DocStr = strDocString
+	   
+	End Function
+	
+	Function GetParam_Outline()
+	    
+	    Set objRegExp = CreateObject("Vbscript.RegExp")
+	    objRegExp.IgnoreCase = True
+	    objRegExp.Global = True
+	    objRegExp.Pattern = "<.*?>"
+		strLine = arrSteps(0)
+	    Set objMatches = objRegExp.Execute(strLine)
+	    
+	    If objMatches.Count > 0 Then
+	        For Each Match In objMatches
+				strArgName=Trim(Replace(Replace(Match.Value,"<",""),">",""))
+				If strExampleTable<>"" Then
+					strExTableHeader=Split(strExampleTable,vbNewLine)(0)
+					arrExTableHeader=Split(strExTableHeader,"|")
+					blnFound=False
+					For Each col in arrExTableHeader
+						col=UCase(Trim(col))
+						strArgName=UCase(Trim(strArgName))
+						If col=strArgName Then
+							blnFound=True
+							Exit For
+						End If
+					Next
+					If blnFound=True Then
+						strArgs = strArgs & strArgName & vbNewLine
+					End IF
+				End If
+	        Next
+	        If Right(strArgs, 2) = vbNewLine Then
+	            strArgs = Left(strArgs, Len(strArgs) - 2)
+	        End If
+	    End If
+	
+	    Set objRegExp = Nothing
+	    GetParam_Outline = strArgs
+	    
+	End Function
+	
+	Function GetFunction_Name()
+	
+	    strLine = arrSteps(0)
+	    Set objRegExp = CreateObject("Vbscript.RegExp")
+	    objRegExp.IgnoreCase = True
+	    objRegExp.Global = True
+	
+	    'remove arguments
+	    objRegExp.Pattern = "\"".*?\"""
+	    strFnName = objRegExp.Replace(strLine, "")
+	
+	    'remove special characters
+	    objRegExp.Pattern = "[^A-Za-z\s]"
+	    strFnName = objRegExp.Replace(strFnName, "")
+	
+	    strFnName = Trim(strFnName)
+	    
+	    'replace space
+	    objRegExp.Pattern = "\s+"
+	    strFnName = objRegExp.Replace(strFnName, "_")
+	        
+	    GetFunction_Name = strFnName
+	
+	End Function
+	
+	
+	Function GetFunction_Params()
+	    
+	    strFuncParam = ""
+	    strInline = Trim(GetParam_Inline)
+	    strDocString = Trim(GetParam_DocStr)
+	    strTables = Trim(GetParam_Table)
+	    strOutline = Trim(GetParam_Outline)
+	    
+	    If strInline <> "" Then
+	        arrInline = Split(strInline, vbNewLine)
+	        For i = 0 To UBound(arrInline)
+	            strFuncParam = strFuncParam & "inParam" & (i + 1) & ", "
+	        Next
+	    End If
+	      
+	    If strOutline <> "" Then
+	        arrOutline = Split(strOutline, vbNewLine)
+	        For i = 0 To UBound(arrOutline)
+	            strFuncParam = strFuncParam & "outParam" & (i + 1) & ", "
+	        Next
+	    End If
+	    
+	    If strDocString <> "" Then
+	        strFuncParam = strFuncParam & "docParam" & ", "
+	    End If
+	    
+	    If strTables <> "" Then
+	        strFuncParam = strFuncParam & "tblParam"
+	    End If
+	        
+	    If Right(strFuncParam, 2) = ", " Then
+	        strFuncParam = Left(strFuncParam, Len(strFuncParam) - 2)
+	    End If
+	    GetFunction_Param = strFuncParam
+	    
+	End Function
+	
+	Function GetStepData()
+		
+		strFuncData = ""
+	    strInline = Trim(GetParam_Inline)
+	    strDocString = Trim(GetParam_DocStr)
+	    strTables = Trim(GetParam_Table)
+	    strOutline = Trim(GetParam_Outline)
+	    
+		'msgbox objScenairo.Title
+		'msgbox objScenairo.Capture_OutlineExample
+		
+	    If strInline <> "" Then
+	        arrInline = Split(strInline, vbNewLine)
+	        For i = 0 To UBound(arrInline)
+	            strFuncData = strFuncData & arrInline(i) & ", "
+	        Next
+	    End If
+	      
+	    If strOutline <> "" Then
+	        arrOutline = Split(strOutline, vbNewLine)
+	        For i = 0 To UBound(arrOutline)
+	            strFuncData = strFuncData & arrOutline(i) & ", "
+	        Next
+	    End If
+	    
+	    If strDocString <> "" Then
+	        strFuncData = strFuncData & Chr(34) & strDocString & Chr(34) & ", "
+	    End If
+	    
+	    If strTables <> "" Then
+	        strFuncData = strFuncData & Chr(34) & strTables & Chr(34)
+	    End If
+	        
+	    If Right(strFuncData, 2) = ", " Then
+	        strFuncData = Left(strFuncData, Len(strFuncData) - 2)
+	    End If
+	    GetStepData = strFuncData
+		
+	End Function
+	
+	Function Capture_OutlineData(intIteration)
+	
+		'if intIteration="" Then intIteration=1
+		strOutline = Trim(GetParam_Outline)
+		arrOutLine=Split(strOutline,vbNewLine)
+	
+		arrExampleTable=Split(objScenairo.Capture_OutlineExample,vbNewLine)
+		
+		strFinalData=""		
+		For Each strColRef in arrOutLine
+			i=0
+			arrExHeader=Split(arrExampleTable(0),"|")
+			blnIfFound=False
+			for i=0 to Ubound(arrExHeader)
+				strExHeader=UCase(Trim(arrExHeader(i)))
+				strColRef=UCase(Trim(strColRef))
+				if strExHeader=strColRef Then
+					blnIfFound=True
+					Exit For
+				End IF
+			next
+			
+			if blnIfFound=True Then
+				arrColData=Split(arrExampleTable(intIteration),"|")
+				strColData=arrColData(i)
+				strFinalData = strFinalData & Chr(34) & strColData & Chr(34) & vbNewLine
+			End IF
+			
+		Next
+		
+		If Right(strFinalData, 2) = vbNewLine Then
+			strFinalData = Left(strFinalData, Len(strFinalData) - 2)
+		End If
+			    		
+		Capture_OutlineData= strFinalData
+		
+	End Function
+End Class
+
+
+==============================================================================================================================================================
+Utility.vbs
+==============================================================================================================================================================
+Function RootDir()
+
+	Set objFSO = CreateObject("Scripting.FileSystemObject")
+	RootDir=objFSO.getParentFolderName(Environment.Value("TestDir"))
+	Set objFSO =Nothing
+	
+End Function
+
+Function Report_Create()
+
+	Set objFSO = CreateObject("Scripting.FileSystemObject")
+	Set objReport = objFSO.CreateTextFile(Environment.Value("ReportPath"), True)
+	objReport.WriteLine("<!DOCTYPE html>")
+	objReport.WriteLine("<html>")
+	objReport.WriteLine("<head>")
+	objReport.WriteLine("<style>")
+	objReport.WriteLine(".tftable {font-size:12px;color:#333333;width:100%;border-width: 1px;border-color: #729ea5;border-collapse: collapse;table-layout:fixed}")
+	objReport.WriteLine(".tftable th {font-size:12px;background-color:#acc8cc;border-width: 1px;padding: 8px;border-style: solid;border-color: #729ea5;text-align:left;}")
+	objReport.WriteLine(".tftable tr {background-color:#fffff0;}")
+	objReport.WriteLine(".tftable td {font-size:12px;border-width: 1px;padding: 8px;border-style: solid;border-color: #729ea5;}")
+	objReport.WriteLine("</style>")
+	objReport.WriteLine("</head>")
+	objReport.WriteLine("<body>")
+	objReport.Close
+	Set objFSO =Nothing
+	
+End Function
+
+
+Function Report_AddFeature(strFeatureTitle,strFeatureDesc)
+	Set objFSO = CreateObject("Scripting.FileSystemObject")
+	Set objReport = objFSO.OpenTextFile(Environment.Value("ReportPath"),8)
+	objReport.WriteLine("<span>Feature:</span><Span class=""feTitle"">" & strFeatureTitle &"</span></br>")
+	objReport.WriteLine("<span>Description:</span><Span class=""feDesc"">"& strFeatureDesc &"</span></br>")
+	objReport.WriteLine("<hr>")
+	objReport.Close
+	Set objFSO =Nothing
+End Function
+
+Function Report_AddScenario(scType,strScTitle,strScDesc)
+
+	If scType="Scenario" Then
+		strScType="Scenario: "
+	ElseIf scType="Outline" Then
+		strScType="Scenario Outline: "
+	End If
+	Set objFSO = CreateObject("Scripting.FileSystemObject")
+	Set objReport = objFSO.OpenTextFile(Environment.Value("ReportPath"),8)
+	objReport.WriteLine("<span>" & strScType & "</span><Span class=""scTitle"">" & strScTitle &"</span></br>")
+	objReport.WriteLine("<span>Description:</span><Span class=""scDesc"">"& strScDesc &"</span></br>")
+	objReport.WriteLine("<table class=""tftable"" border=""1"">")
+	objReport.WriteLine("<tr><th width=""10%"">Step</th><th width=""70%"">Description</th><th width=""10%"">Duration (Sec)</th><th width=""10%"">Status</th></tr>")
+	objReport.Close
+	Set objFSO =Nothing
+	
+End Function
+
+Function Report_AddStep(strStep,strDescription,strDuration,strStatus)
+
+	If Trim(UCase(strStatus))="TRUE" Then
+		strStatus="Pass"
+	ElseIf Trim(UCase(strStatus))="FALSE" Then	
+		strStatus="Fail"
+	ElseIf Trim(UCase(strStatus))="SKIP" Then
+		strStatus="Skipped"
+	Else 
+		strStatus="Undefined"
+	End If
+	
+	strDescription=Replace(Replace(strDescription,"<","&lt;"),">","&gt;")
+	
+	Set objFSO = CreateObject("Scripting.FileSystemObject")
+	Set objReport = objFSO.OpenTextFile(Environment.Value("ReportPath"),8)
+	objReport.WriteLine("<tr><td>"& strStep &"</td><td>" & strDescription & "</td><td>" & strDuration & "</td><td>" & strStatus & "</td></tr>")
+	objReport.Close
+	Set objFSO =Nothing
+	
+End Function
+
+Function Report_CloseScenario()
+	Set objFSO = CreateObject("Scripting.FileSystemObject")
+	Set objReport = objFSO.OpenTextFile(Environment.Value("ReportPath"),8)
+	objReport.WriteLine("</table>")
+	objReport.WriteLine("</p>")
+	objReport.Close
+	Set objFSO =Nothing
+End Function
+
+Function Report_CloseFeature()
+	Set objFSO = CreateObject("Scripting.FileSystemObject")
+	Set objReport = objFSO.OpenTextFile(Environment.Value("ReportPath"),8)
+	objReport.WriteLine("</body>")
+	objReport.WriteLine("</html>")
+	objReport.Close
+	Set objFSO =Nothing
+End Function
+
+==============================================================================================================================================================
+Summary.html
+==============================================================================================================================================================
+
+
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+.tftable {font-size:12px;color:#333333;width:100%;border-width: 1px;border-color: #729ea5;border-collapse: collapse;table-layout:fixed}
+.tftable th {font-size:12px;background-color:#acc8cc;border-width: 1px;padding: 8px;border-style: solid;border-color: #729ea5;text-align:left;}
+.tftable tr {background-color:#fffff0;}
+.tftable td {font-size:12px;border-width: 1px;padding: 8px;border-style: solid;border-color: #729ea5;}
+</style>
+</head>
+<body>
+
+<table class="tftable" border="1">
+<tr><th width="20%">Feature</th><th width="20%" colspan="4">Scenarios</th><th width="40%" colspan="6">Steps</th><th width="10%">Status</th></tr>
+<tr><td></td><td>Passed</td><td>Failed</td><td>Excluded</td><td>Total</td>  <td>Passed</td><td>Failed</td><td>Skipped</td><td>Pending</td><td>Undefined</td><td>Total</td><td></td>
+<tr><td>Search</td><td>1</td><td>2</td><td>1</td><td>4</td>  <td>1</td><td>1</td><td>1</td><td>1</td><td>1</td><td>5</td><td>Fail</td>
+<!--update summary-->
+</table>
+</p>
+<span>Feature:</span><Span class="feTitle">Search</span></br>
+<span>Description:</span><Span class="feDesc"></span></br>
+<hr>
+<span>Scenario: </span><Span class="scTitle">Search result</span></br>
+<span>Description:</span><Span class="scDesc"></span></br>
+<table class="tftable" border="1">
+<tr><th width="10%">Step</th><th width="70%">Description</th><th width="10%">Duration (Sec)</th><th width="10%">Status</th></tr>
+<tr><td>Given</td><td>Search "red" and "blue"</td><td>0</td><td>Pass</td></tr>
+<tr><td>When</td><td>the user clicks the first "aaa" result "bbbb" link</td><td>0</td><td>Undefined</td></tr>
+<tr><td>Then</td><td>the "ccc" page for the chosen result link is displayed</td><td>0</td><td>Undefined</td></tr>
+</table>
+</p>
+<span>Scenario Outline: </span><Span class="scTitle">eating</span></br>
+<span>Description:</span><Span class="scDesc"></span></br>
+<table class="tftable" border="1">
+<tr><th width="10%">Step</th><th width="70%">Description</th><th width="10%">Duration (Sec)</th><th width="10%">Status</th></tr>
+<tr><td>Given</td><td>zzzzzz</td><td>0</td><td>Undefined</td></tr>
+
+</table>
+</p>
+</body>
+</html>
+==============================================================================================================================================================
+GenerateStepDef.bat
+==============================================================================================================================================================
+REM "GenerateSetpDef.vbs" and "Parser.vbs" should be in the same directory
+cscript //nologo %cd%"\FunctionLibrary\Common\GenerateSetpDef.vbs" %cd%"\Features" %cd%"\StepDefinitions"
+pause
+==============================================================================================================================================================
+Folders
+==============================================================================================================================================================
+Features
+FunctionLibrary - Common > GenerateSetpDef,Parser,Utility
+Main
+Report
+StepDefinitions
